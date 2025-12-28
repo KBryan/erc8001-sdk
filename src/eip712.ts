@@ -1,6 +1,6 @@
 /**
  * @erc8001/sdk - EIP-712 Signing Utilities
- * 
+ *
  * Implements the exact EIP-712 typed data structures from the ERC-8001 spec.
  */
 
@@ -21,7 +21,6 @@ import type {
   AcceptanceAttestation,
   CoordinationPayload,
   ERC8001Domain,
-  TypedData,
 } from './types';
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -33,10 +32,10 @@ import type {
  * MUST match the Solidity constant exactly.
  */
 export const AGENT_INTENT_TYPEHASH = keccak256(
-  encodePacked(
-    ['string'],
-    ['AgentIntent(bytes32 payloadHash,uint64 expiry,uint64 nonce,address agentId,bytes32 coordinationType,uint256 coordinationValue,address[] participants)']
-  )
+    encodePacked(
+        ['string'],
+        ['AgentIntent(bytes32 payloadHash,uint64 expiry,uint64 nonce,address agentId,bytes32 coordinationType,uint256 coordinationValue,address[] participants)']
+    )
 );
 
 /**
@@ -44,10 +43,10 @@ export const AGENT_INTENT_TYPEHASH = keccak256(
  * MUST match the Solidity constant exactly.
  */
 export const ACCEPTANCE_TYPEHASH = keccak256(
-  encodePacked(
-    ['string'],
-    ['AcceptanceAttestation(bytes32 intentHash,address participant,uint64 nonce,uint64 expiry,bytes32 conditionsHash)']
-  )
+    encodePacked(
+        ['string'],
+        ['AcceptanceAttestation(bytes32 intentHash,address participant,uint64 nonce,uint64 expiry,bytes32 conditionsHash)']
+    )
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -100,21 +99,21 @@ export function computeParticipantsHash(participants: Address[]): Hash {
  */
 export function computeIntentStructHash(intent: AgentIntent): Hash {
   const participantsHash = computeParticipantsHash(intent.participants);
-  
+
   return keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32, bytes32, uint64, uint64, address, bytes32, uint256, bytes32'),
-      [
-        AGENT_INTENT_TYPEHASH,
-        intent.payloadHash,
-        intent.expiry,
-        intent.nonce,
-        intent.agentId,
-        intent.coordinationType,
-        intent.coordinationValue,
-        participantsHash,
-      ]
-    )
+      encodeAbiParameters(
+          parseAbiParameters('bytes32, bytes32, uint64, uint64, address, bytes32, uint256, bytes32'),
+          [
+            AGENT_INTENT_TYPEHASH,
+            intent.payloadHash,
+            intent.expiry,
+            intent.nonce,
+            intent.agentId,
+            intent.coordinationType,
+            intent.coordinationValue,
+            participantsHash,
+          ]
+      )
   );
 }
 
@@ -123,20 +122,20 @@ export function computeIntentStructHash(intent: AgentIntent): Hash {
  * Note: signature is NOT included (it signs this hash).
  */
 export function computeAcceptanceStructHash(
-  attestation: Omit<AcceptanceAttestation, 'signature'>
+    attestation: Omit<AcceptanceAttestation, 'signature'>
 ): Hash {
   return keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32, bytes32, address, uint64, uint64, bytes32'),
-      [
-        ACCEPTANCE_TYPEHASH,
-        attestation.intentHash,
-        attestation.participant,
-        attestation.nonce,
-        attestation.expiry,
-        attestation.conditionsHash,
-      ]
-    )
+      encodeAbiParameters(
+          parseAbiParameters('bytes32, bytes32, address, uint64, uint64, bytes32'),
+          [
+            ACCEPTANCE_TYPEHASH,
+            attestation.intentHash,
+            attestation.participant,
+            attestation.nonce,
+            attestation.expiry,
+            attestation.conditionsHash,
+          ]
+      )
   );
 }
 
@@ -145,17 +144,17 @@ export function computeAcceptanceStructHash(
  */
 export function computePayloadHash(payload: CoordinationPayload): Hash {
   return keccak256(
-    encodeAbiParameters(
-      parseAbiParameters('bytes32, bytes32, bytes32, bytes32, uint256, bytes32'),
-      [
-        payload.version,
-        payload.coordinationType,
-        keccak256(payload.coordinationData),
-        payload.conditionsHash,
-        payload.timestamp,
-        keccak256(payload.metadata),
-      ]
-    )
+      encodeAbiParameters(
+          parseAbiParameters('bytes32, bytes32, bytes32, bytes32, uint256, bytes32'),
+          [
+            payload.version,
+            payload.coordinationType,
+            keccak256(payload.coordinationData),
+            payload.conditionsHash,
+            payload.timestamp,
+            keccak256(payload.metadata),
+          ]
+      )
   );
 }
 
@@ -168,8 +167,8 @@ export function computePayloadHash(payload: CoordinationPayload): Hash {
  * Per spec: {name: "ERC-8001", version: "1", chainId, verifyingContract}
  */
 export function createDomain(
-  chainId: bigint,
-  verifyingContract: Address
+    chainId: bigint,
+    verifyingContract: Address
 ): ERC8001Domain {
   return {
     name: 'ERC-8001',
@@ -188,9 +187,9 @@ export function createDomain(
  * Returns the signature to submit with proposeCoordination().
  */
 export async function signIntent(
-  walletClient: WalletClient,
-  domain: ERC8001Domain,
-  intent: AgentIntent
+    walletClient: WalletClient,
+    domain: ERC8001Domain,
+    intent: AgentIntent
 ): Promise<Hex> {
   const account = walletClient.account;
   if (!account) throw new Error('Wallet client has no account');
@@ -217,9 +216,9 @@ export async function signIntent(
  * Returns the complete attestation with signature.
  */
 export async function signAcceptance(
-  walletClient: WalletClient,
-  domain: ERC8001Domain,
-  attestation: Omit<AcceptanceAttestation, 'signature'>
+    walletClient: WalletClient,
+    domain: ERC8001Domain,
+    attestation: Omit<AcceptanceAttestation, 'signature'>
 ): Promise<AcceptanceAttestation> {
   const account = walletClient.account;
   if (!account) throw new Error('Wallet client has no account');
@@ -249,8 +248,8 @@ export async function signAcceptance(
  * This is what gets signed by the proposer.
  */
 export function computeIntentDigest(
-  domain: ERC8001Domain,
-  intent: AgentIntent
+    domain: ERC8001Domain,
+    intent: AgentIntent
 ): Hash {
   return hashTypedData({
     domain,
@@ -273,8 +272,8 @@ export function computeIntentDigest(
  * This is what gets signed by participants.
  */
 export function computeAcceptanceDigest(
-  domain: ERC8001Domain,
-  attestation: Omit<AcceptanceAttestation, 'signature'>
+    domain: ERC8001Domain,
+    attestation: Omit<AcceptanceAttestation, 'signature'>
 ): Hash {
   return hashTypedData({
     domain,

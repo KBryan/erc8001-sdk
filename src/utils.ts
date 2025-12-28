@@ -1,6 +1,6 @@
 /**
  * @erc8001/sdk - Utility Functions
- * 
+ *
  * Helpers for participant canonicalization, coordination types, etc.
  */
 
@@ -11,7 +11,6 @@ import {
   keccak256,
   encodePacked,
   getAddress,
-  isAddress,
 } from 'viem';
 
 import type {
@@ -37,7 +36,7 @@ export function canonicalizeParticipants(participants: Address[]): Address[] {
   // Checksum and deduplicate
   const uniqueSet = new Set(participants.map(p => getAddress(p)));
   const unique = Array.from(uniqueSet);
-  
+
   // Sort by uint160 (address as bigint)
   return unique.sort((a, b) => {
     const aNum = BigInt(a);
@@ -103,37 +102,37 @@ export const CoordinationTypes = {
  * - Ensures agentId is in participants
  * - Computes payload hash
  * - Sets expiry based on TTL
- * 
+ *
  * @param options Intent creation options
  * @param nonce Current nonce for the agent (fetch with getAgentNonce)
  * @returns The complete AgentIntent ready for signing
  */
 export function createIntent(
-  options: CreateIntentOptions,
-  nonce: bigint
+    options: CreateIntentOptions,
+    nonce: bigint
 ): { intent: AgentIntent; payload: CoordinationPayload } {
   // Ensure agentId is in participants
   let participants = [...options.participants];
   if (!isParticipant(options.agentId, participants)) {
     participants.push(options.agentId);
   }
-  
+
   // Canonicalize
   participants = canonicalizeParticipants(participants);
-  
+
   // Build payload
   const payload: CoordinationPayload = {
     ...options.payload,
     timestamp: BigInt(Math.floor(Date.now() / 1000)),
   };
-  
+
   // Compute payload hash
   const payloadHash = computePayloadHash(payload);
-  
+
   // Compute expiry
   const ttl = options.ttlSeconds ?? 3600; // Default 1 hour
   const expiry = BigInt(Math.floor(Date.now() / 1000) + ttl);
-  
+
   // Handle coordinationType as string or hash
   let coordType: Hash;
   if (options.coordinationType.startsWith('0x') && options.coordinationType.length === 66) {
@@ -141,7 +140,7 @@ export function createIntent(
   } else {
     coordType = coordinationType(options.coordinationType);
   }
-  
+
   const intent: AgentIntent = {
     payloadHash,
     expiry,
@@ -151,7 +150,7 @@ export function createIntent(
     coordinationValue: options.coordinationValue ?? 0n,
     participants,
   };
-  
+
   return { intent, payload };
 }
 
@@ -160,12 +159,12 @@ export function createIntent(
  * Call signAcceptance() to add the signature.
  */
 export function createAttestation(
-  options: CreateAttestationOptions,
-  nonce?: bigint
+    options: CreateAttestationOptions,
+    nonce?: bigint
 ): Omit<AcceptanceAttestation, 'signature'> {
   const ttl = options.ttlSeconds ?? 3600; // Default 1 hour
   const expiry = BigInt(Math.floor(Date.now() / 1000) + ttl);
-  
+
   return {
     intentHash: options.intentHash,
     participant: options.participant,
@@ -185,7 +184,7 @@ export function createAttestation(
  */
 export function computeActionLeaf(action: ActionBound): Hash {
   return keccak256(
-    encodePacked(['address', 'bytes4'], [action.target, action.selector as Hex])
+      encodePacked(['address', 'bytes4'], [action.target, action.selector as Hex])
   );
 }
 
@@ -197,15 +196,15 @@ export function computeBoundsRoot(actions: ActionBound[]): Hash {
   if (actions.length === 0) {
     throw new Error('At least one action required');
   }
-  
+
   // Compute leaves
   let leaves = actions.map(computeActionLeaf);
-  
+
   // Pad to power of 2
   while (leaves.length > 1 && (leaves.length & (leaves.length - 1)) !== 0) {
     leaves.push(leaves[leaves.length - 1]);
   }
-  
+
   // Build tree bottom-up
   while (leaves.length > 1) {
     const nextLevel: Hash[] = [];
@@ -216,7 +215,7 @@ export function computeBoundsRoot(actions: ActionBound[]): Hash {
     }
     leaves = nextLevel;
   }
-  
+
   return leaves[0];
 }
 
@@ -227,23 +226,23 @@ export function generateProof(actions: ActionBound[], index: number): Hash[] {
   if (index >= actions.length) {
     throw new Error('Index out of bounds');
   }
-  
+
   let leaves = actions.map(computeActionLeaf);
-  
+
   // Pad to power of 2
   while (leaves.length > 1 && (leaves.length & (leaves.length - 1)) !== 0) {
     leaves.push(leaves[leaves.length - 1]);
   }
-  
+
   const proof: Hash[] = [];
   let idx = index;
-  
+
   while (leaves.length > 1) {
     const siblingIdx = idx % 2 === 0 ? idx + 1 : idx - 1;
     if (siblingIdx < leaves.length) {
       proof.push(leaves[siblingIdx]);
     }
-    
+
     const nextLevel: Hash[] = [];
     for (let i = 0; i < leaves.length; i += 2) {
       const left = leaves[i];
@@ -253,7 +252,7 @@ export function generateProof(actions: ActionBound[], index: number): Hash[] {
     leaves = nextLevel;
     idx = Math.floor(idx / 2);
   }
-  
+
   return proof;
 }
 
@@ -278,17 +277,17 @@ export function validateIntent(intent: AgentIntent): void {
   if (intent.expiry <= BigInt(Math.floor(Date.now() / 1000))) {
     throw new Error('Intent already expired');
   }
-  
+
   // Check participants are canonical
   if (!isCanonical(intent.participants)) {
     throw new Error('Participants not canonical (must be sorted ascending)');
   }
-  
+
   // Check agentId is in participants
   if (!isParticipant(intent.agentId, intent.participants)) {
     throw new Error('agentId must be in participants');
   }
-  
+
   // Check at least one participant
   if (intent.participants.length === 0) {
     throw new Error('At least one participant required');
@@ -300,19 +299,19 @@ export function validateIntent(intent: AgentIntent): void {
  * Throws if invalid.
  */
 export function validateAttestation(
-  attestation: AcceptanceAttestation,
-  participants: Address[]
+    attestation: AcceptanceAttestation,
+    participants: Address[]
 ): void {
   // Check expiry is in future
   if (attestation.expiry <= BigInt(Math.floor(Date.now() / 1000))) {
     throw new Error('Attestation already expired');
   }
-  
+
   // Check participant is in list
   if (!isParticipant(attestation.participant, participants)) {
     throw new Error('Participant not in required list');
   }
-  
+
   // Check signature exists
   if (!attestation.signature || attestation.signature === '0x') {
     throw new Error('Missing signature');

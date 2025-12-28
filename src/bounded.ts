@@ -1,6 +1,6 @@
 /**
  * @erc8001/sdk - Bounded Execution Client
- * 
+ *
  * Client for policy-enforced bounded agent execution.
  */
 
@@ -10,7 +10,8 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
-  encodeFunctionData,
+  type Chain,
+  type Account,
 } from 'viem';
 
 import type {
@@ -33,17 +34,17 @@ import { BOUNDED_EXECUTION_ABI } from './abis/AgentCoordination';
 
 /**
  * Bounded Execution Client
- * 
+ *
  * @example
  * ```ts
  * import { BoundedClient } from '@erc8001/sdk';
- * 
+ *
  * const client = new BoundedClient({
  *   contractAddress: '0x...',
  *   publicClient,
  *   walletClient,
  * });
- * 
+ *
  * // Register a policy
  * const { policyId } = await client.registerPolicy({
  *   agent: '0x...',
@@ -54,7 +55,7 @@ import { BOUNDED_EXECUTION_ABI } from './abis/AgentCoordination';
  *   maxCalls: 100,
  *   durationSeconds: 86400, // 1 day
  * });
- * 
+ *
  * // Execute within bounds
  * await client.execute(policyId, {
  *   target: '0x...',
@@ -68,6 +69,7 @@ export class BoundedClient {
   private readonly contractAddress: Address;
   private readonly publicClient: PublicClient;
   private readonly walletClient?: WalletClient;
+  private readonly chain: Chain;
 
   // Cache of registered policies for proof generation
   private readonly policyActions: Map<string, ActionBound[]> = new Map();
@@ -76,10 +78,17 @@ export class BoundedClient {
     contractAddress: Address;
     publicClient: PublicClient;
     walletClient?: WalletClient;
+    chain?: Chain;
   }) {
     this.contractAddress = options.contractAddress;
     this.publicClient = options.publicClient;
     this.walletClient = options.walletClient;
+
+    const chain = options.chain ?? options.publicClient.chain;
+    if (!chain) {
+      throw new Error('Chain must be provided either via publicClient or chain option');
+    }
+    this.chain = chain;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -95,7 +104,15 @@ export class BoundedClient {
       abi: BOUNDED_EXECUTION_ABI,
       functionName: 'getPolicy',
       args: [policyId],
-    }) as any;
+    }) as {
+      boundsRoot: Hash;
+      spendingLimit: bigint;
+      spent: bigint;
+      windowStart: bigint;
+      windowEnd: bigint;
+      callsRemaining: bigint;
+      active: boolean;
+    };
 
     return {
       boundsRoot: result.boundsRoot,
@@ -124,11 +141,11 @@ export class BoundedClient {
    * Verify if an action is within bounds.
    */
   async verifyBounds(
-    policyId: Hash,
-    target: Address,
-    callData: Hex,
-    value: bigint,
-    proof: Hash[]
+      policyId: Hash,
+      target: Address,
+      callData: Hex,
+      value: bigint,
+      proof: Hash[]
   ): Promise<boolean> {
     return this.publicClient.readContract({
       address: this.contractAddress,
@@ -152,18 +169,25 @@ export class BoundedClient {
   async isPolicyValid(policyId: Hash): Promise<boolean> {
     const policy = await this.getPolicy(policyId);
     const now = BigInt(Math.floor(Date.now() / 1000));
-    
+
     return (
-      policy.active &&
-      now >= policy.windowStart &&
-      now < policy.windowEnd &&
-      policy.callsRemaining > 0n
+        policy.active &&
+        now >= policy.windowStart &&
+        now < policy.windowEnd &&
+        policy.callsRemaining > 0n
     );
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // WRITE FUNCTIONS
   // ═══════════════════════════════════════════════════════════════════════════
+
+  private getAccount(): Account {
+    if (!this.walletClient?.account) {
+      throw new Error('Wallet client with account required for write operations');
+    }
+    return this.walletClient.account;
+  }
 
   /**
    * Register a new policy.
@@ -177,9 +201,11 @@ export class BoundedClient {
       throw new Error('Wallet client required for write operations');
     }
 
+    const account = this.getAccount();
+
     // Compute bounds root
     const boundsRoot = computeBoundsRoot(options.actions);
-    
+
     // Calculate time window
     const now = BigInt(Math.floor(Date.now() / 1000));
     const windowStart = now;
@@ -187,6 +213,8 @@ export class BoundedClient {
 
     // Submit transaction
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: BOUNDED_EXECUTION_ABI,
       functionName: 'registerPolicy',
@@ -202,12 +230,6 @@ export class BoundedClient {
 
     // Wait for receipt to get policyId from event
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
-    
-    // Parse PolicyRegistered event
-    const policyRegisteredLog = receipt.logs.find(log => {
-      // Check if this is the PolicyRegistered event
-      return log.topics[0] === '0x' + 'PolicyRegistered'.padEnd(64, '0'); // Simplified
-    });
 
     // For now, compute policyId the same way the contract does
     // In production, parse from event
@@ -223,13 +245,13 @@ export class BoundedClient {
    * Execute an action within policy bounds.
    */
   async execute(
-    policyId: Hash,
-    action: {
-      target: Address;
-      callData: Hex;
-      value?: bigint;
-    },
-    proof?: Hash[]
+      policyId: Hash,
+      action: {
+        target: Address;
+        callData: Hex;
+        value?: bigint;
+      },
+      proof?: Hash[]
   ): Promise<{
     txHash: Hash;
     success: boolean;
@@ -238,6 +260,7 @@ export class BoundedClient {
       throw new Error('Wallet client required for write operations');
     }
 
+    const account = this.getAccount();
     const value = action.value ?? 0n;
 
     // Generate proof if not provided
@@ -247,10 +270,10 @@ export class BoundedClient {
       if (actions) {
         const selector = action.callData.slice(0, 10) as Hex;
         const actionIndex = actions.findIndex(
-          a => a.target.toLowerCase() === action.target.toLowerCase() && 
-               a.selector.toLowerCase() === selector.toLowerCase()
+            a => a.target.toLowerCase() === action.target.toLowerCase() &&
+                a.selector.toLowerCase() === selector.toLowerCase()
         );
-        
+
         if (actionIndex >= 0) {
           merkleProof = generateProof(actions, actionIndex);
         }
@@ -263,6 +286,8 @@ export class BoundedClient {
 
     // Submit transaction
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: BOUNDED_EXECUTION_ABI,
       functionName: 'executeBounded',
@@ -271,7 +296,7 @@ export class BoundedClient {
 
     // Wait for receipt
     const receipt = await this.publicClient.waitForTransactionReceipt({ hash: txHash });
-    
+
     // Check if execution succeeded (from event)
     const success = receipt.status === 'success';
 
@@ -286,7 +311,11 @@ export class BoundedClient {
       throw new Error('Wallet client required for write operations');
     }
 
+    const account = this.getAccount();
+
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: BOUNDED_EXECUTION_ABI,
       functionName: 'revokePolicy',

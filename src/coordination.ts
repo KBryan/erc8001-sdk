@@ -1,6 +1,6 @@
 /**
  * @erc8001/sdk - Coordination Client
- * 
+ *
  * High-level client for ERC-8001 Agent Coordination.
  */
 
@@ -10,7 +10,8 @@ import {
   type Hex,
   type PublicClient,
   type WalletClient,
-  getContract,
+  type Chain,
+  type Account,
 } from 'viem';
 
 import type {
@@ -45,22 +46,22 @@ import { AGENT_COORDINATION_ABI } from './abis/AgentCoordination';
 
 /**
  * ERC-8001 Coordination Client
- * 
+ *
  * @example
  * ```ts
  * import { CoordinationClient } from '@erc8001/sdk';
  * import { createPublicClient, createWalletClient, http } from 'viem';
  * import { baseSepolia } from 'viem/chains';
- * 
+ *
  * const publicClient = createPublicClient({ chain: baseSepolia, transport: http() });
  * const walletClient = createWalletClient({ chain: baseSepolia, transport: http() });
- * 
+ *
  * const client = new CoordinationClient({
  *   contractAddress: '0x...',
  *   publicClient,
  *   walletClient,
  * });
- * 
+ *
  * // Propose a coordination
  * const { intentHash } = await client.propose({
  *   agentId: '0x...',
@@ -68,10 +69,10 @@ import { AGENT_COORDINATION_ABI } from './abis/AgentCoordination';
  *   coordinationType: 'TRADE_V1',
  *   payload: { ... },
  * });
- * 
+ *
  * // Accept as participant
  * await client.accept(intentHash);
- * 
+ *
  * // Execute when ready
  * await client.execute(intentHash, payload);
  * ```
@@ -81,17 +82,25 @@ export class CoordinationClient {
   private readonly publicClient: PublicClient;
   private readonly walletClient?: WalletClient;
   private readonly chainId: bigint;
+  private readonly chain: Chain;
 
   constructor(options: {
     contractAddress: Address;
     publicClient: PublicClient;
     walletClient?: WalletClient;
     chainId?: bigint;
+    chain?: Chain;
   }) {
     this.contractAddress = options.contractAddress;
     this.publicClient = options.publicClient;
     this.walletClient = options.walletClient;
-    this.chainId = options.chainId ?? BigInt(options.publicClient.chain?.id ?? 1);
+
+    const chain = options.chain ?? options.publicClient.chain;
+    if (!chain) {
+      throw new Error('Chain must be provided either via publicClient or chain option');
+    }
+    this.chain = chain;
+    this.chainId = options.chainId ?? BigInt(chain.id);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -169,9 +178,16 @@ export class CoordinationClient {
   // WRITE FUNCTIONS
   // ═══════════════════════════════════════════════════════════════════════════
 
+  private getAccount(): Account {
+    if (!this.walletClient?.account) {
+      throw new Error('Wallet client with account required for write operations');
+    }
+    return this.walletClient.account;
+  }
+
   /**
    * Propose a new coordination.
-   * 
+   *
    * @returns The intent hash and transaction hash
    */
   async propose(options: CreateIntentOptions): Promise<{
@@ -184,26 +200,30 @@ export class CoordinationClient {
       throw new Error('Wallet client required for write operations');
     }
 
+    const account = this.getAccount();
+
     // Get current nonce
     const nonce = await this.getAgentNonce(options.agentId);
-    
+
     // Build intent and payload
     const { intent, payload } = createIntent(options, nonce);
-    
+
     // Validate
     validateIntent(intent);
-    
+
     // Compute intent hash
     const intentHash = computeIntentStructHash(intent);
-    
+
     // Create domain
     const domain = createDomain(this.chainId, this.contractAddress);
-    
+
     // Sign intent
     const signature = await signIntent(this.walletClient, domain, intent);
-    
+
     // Submit transaction
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: AGENT_COORDINATION_ABI,
       functionName: 'proposeCoordination',
@@ -215,22 +235,23 @@ export class CoordinationClient {
 
   /**
    * Accept a coordination as a participant.
-   * 
+   *
    * @returns The transaction hash
    */
   async accept(
-    intentHash: Hash,
-    options?: Partial<CreateAttestationOptions>
+      intentHash: Hash,
+      options?: Partial<CreateAttestationOptions>
   ): Promise<{ txHash: Hash; attestation: AcceptanceAttestation }> {
-    if (!this.walletClient?.account) {
-      throw new Error('Wallet client with account required for write operations');
+    if (!this.walletClient) {
+      throw new Error('Wallet client required for write operations');
     }
 
-    const participant = this.walletClient.account.address;
-    
+    const account = this.getAccount();
+    const participant = account.address;
+
     // Get coordination to validate participant
     const status = await this.getStatus(intentHash);
-    
+
     // Build attestation
     const attestationOptions: CreateAttestationOptions = {
       intentHash,
@@ -238,20 +259,22 @@ export class CoordinationClient {
       conditionsHash: options?.conditionsHash,
       ttlSeconds: options?.ttlSeconds,
     };
-    
+
     const unsignedAttestation = createAttestation(attestationOptions);
-    
+
     // Create domain
     const domain = createDomain(this.chainId, this.contractAddress);
-    
+
     // Sign attestation
     const attestation = await signAcceptance(this.walletClient, domain, unsignedAttestation);
-    
+
     // Validate
     validateAttestation(attestation, status.participants);
-    
+
     // Submit transaction
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: AGENT_COORDINATION_ABI,
       functionName: 'acceptCoordination',
@@ -263,17 +286,19 @@ export class CoordinationClient {
 
   /**
    * Execute a ready coordination.
-   * 
+   *
    * @returns The transaction hash and execution result
    */
   async execute(
-    intentHash: Hash,
-    payload: CoordinationPayload,
-    executionData: Hex = '0x'
+      intentHash: Hash,
+      payload: CoordinationPayload,
+      executionData: Hex = '0x'
   ): Promise<{ txHash: Hash }> {
     if (!this.walletClient) {
       throw new Error('Wallet client required for write operations');
     }
+
+    const account = this.getAccount();
 
     // Verify status is Ready
     const status = await this.getStatus(intentHash);
@@ -283,6 +308,8 @@ export class CoordinationClient {
 
     // Submit transaction
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: AGENT_COORDINATION_ABI,
       functionName: 'executeCoordination',
@@ -302,7 +329,11 @@ export class CoordinationClient {
       throw new Error('Wallet client required for write operations');
     }
 
+    const account = this.getAccount();
+
     const txHash = await this.walletClient.writeContract({
+      account,
+      chain: this.chain,
       address: this.contractAddress,
       abi: AGENT_COORDINATION_ABI,
       functionName: 'cancelCoordination',
@@ -328,7 +359,7 @@ export class CoordinationClient {
     const nonce = await this.getAgentNonce(options.agentId);
     const { intent, payload } = createIntent(options, nonce);
     const intentHash = computeIntentStructHash(intent);
-    
+
     return { intent, payload, intentHash };
   }
 
@@ -339,7 +370,7 @@ export class CoordinationClient {
     if (!this.walletClient) {
       throw new Error('Wallet client required for signing');
     }
-    
+
     const domain = createDomain(this.chainId, this.contractAddress);
     return signIntent(this.walletClient, domain, intent);
   }
@@ -348,25 +379,25 @@ export class CoordinationClient {
    * Create and sign an acceptance without submitting.
    */
   async signAcceptance(
-    intentHash: Hash,
-    options?: Partial<CreateAttestationOptions>
+      intentHash: Hash,
+      options?: Partial<CreateAttestationOptions>
   ): Promise<AcceptanceAttestation> {
     if (!this.walletClient?.account) {
       throw new Error('Wallet client with account required for signing');
     }
 
     const participant = this.walletClient.account.address;
-    
+
     const attestationOptions: CreateAttestationOptions = {
       intentHash,
       participant,
       conditionsHash: options?.conditionsHash,
       ttlSeconds: options?.ttlSeconds,
     };
-    
+
     const unsignedAttestation = createAttestation(attestationOptions);
     const domain = createDomain(this.chainId, this.contractAddress);
-    
+
     return signAcceptance(this.walletClient, domain, unsignedAttestation);
   }
 
@@ -374,8 +405,8 @@ export class CoordinationClient {
    * Wait for a coordination to reach Ready status.
    */
   async waitForReady(
-    intentHash: Hash,
-    options?: { pollIntervalMs?: number; timeoutMs?: number }
+      intentHash: Hash,
+      options?: { pollIntervalMs?: number; timeoutMs?: number }
   ): Promise<CoordinationStatus> {
     const pollInterval = options?.pollIntervalMs ?? 2000;
     const timeout = options?.timeoutMs ?? 60000;
@@ -383,11 +414,11 @@ export class CoordinationClient {
 
     while (Date.now() - startTime < timeout) {
       const status = await this.getStatus(intentHash);
-      
+
       if (status.status === 2) { // Ready
         return status;
       }
-      
+
       if (status.status >= 3) { // Executed, Cancelled, or Expired
         throw new Error(`Coordination ended with status: ${status.status}`);
       }
