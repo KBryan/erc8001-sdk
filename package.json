@@ -1,0 +1,58 @@
+{
+  "name": "@erc8001/sdk",
+  "version": "1.0.0",
+  "description": "TypeScript SDK for ERC-8001 Agent Coordination Framework",
+  "main": "dist/index.js",
+  "module": "dist/index.mjs",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "require": "./dist/index.js",
+      "import": "./dist/index.mjs",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsup src/index.ts --format cjs,esm --dts",
+    "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
+    "lint": "eslint src/",
+    "test": "vitest",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "ethereum",
+    "erc8001",
+    "agent",
+    "coordination",
+    "ai",
+    "web3",
+    "eip712",
+    "multi-party"
+  ],
+  "author": "Kwame Bryan",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/KBryan/erc8001-sdk"
+  },
+  "homepage": "https://eips.ethereum.org/EIPS/eip-8001",
+  "dependencies": {
+    "viem": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsup": "^8.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^1.0.0"
+  },
+  "peerDependencies": {
+    "viem": ">=2.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
